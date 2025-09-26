@@ -1,0 +1,23 @@
+# User Management REST API - Requirements
+# Flask web framework and dependencies
+
+Flask>=2.3.0
+
+# Optional development dependencies
+# For testing and development only:
+# requests>=2.31.0  # For testing API endpoints
+# pytest>=7.4.0     # For unit testing
+
+# Installation commands:
+# pip install Flask
+# or
+# pip install -r requirements.txt
+
+# Package descriptions:
+# Flask - Micro web framework for building REST APIs
+
+# Python version: 3.6+
+# Standard libraries also used:
+# - json (JSON data handling)
+# - datetime (timestamp generation)
+# - os (environment variables)
