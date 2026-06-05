@@ -13,7 +13,15 @@ Date: September 26, 2025
 from flask import Flask, request, jsonify
 from datetime import datetime
 import json
+import logging
 import os
+
+# Configure logging so exceptions are visible to operators
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -60,7 +68,7 @@ def initialize_sample_data():
 
 # Helper functions
 def validate_user_data(data, is_update=False):
-    """Validate user data for required fields"""
+    """Validate user data for required fields and types"""
     required_fields = ['name', 'email']
     if not is_update:
         required_fields.extend(['age'])
@@ -71,15 +79,29 @@ def validate_user_data(data, is_update=False):
         if field not in data or not data[field]:
             errors.append(f"'{field}' is required")
 
+    # Name type validation
+    if 'name' in data and data['name']:
+        if not isinstance(data['name'], str):
+            errors.append("'name' must be a string")
+
     # Email validation (basic)
     if 'email' in data and data['email']:
-        if '@' not in data['email'] or '.' not in data['email']:
+        if not isinstance(data['email'], str):
+            errors.append("'email' must be a string")
+        elif '@' not in data['email'] or '.' not in data['email']:
             errors.append("Invalid email format")
 
     # Age validation
     if 'age' in data and data['age'] is not None:
-        if not isinstance(data['age'], int) or data['age'] < 0:
+        if not isinstance(data['age'], int) or isinstance(data['age'], bool):
             errors.append("Age must be a positive integer")
+        elif data['age'] < 0:
+            errors.append("Age must be a positive integer")
+
+    # Department type validation
+    if 'department' in data and data['department'] is not None:
+        if not isinstance(data['department'], str):
+            errors.append("'department' must be a string")
 
     return errors
 
@@ -150,19 +172,22 @@ def health_check():
 def get_all_users():
     """GET endpoint to retrieve all users"""
     try:
-        # Support for pagination (optional enhancement)
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
+
+        if page < 1:
+            return create_error_response("'page' must be a positive integer", 400)
+        if per_page < 1 or per_page > 100:
+            return create_error_response("'per_page' must be between 1 and 100", 400)
 
         users_list = list(users_db.values())
 
         if not users_list:
             return create_success_response(
-                {"users": [], "total": 0},
+                {"users": [], "total": 0, "page": page, "per_page": per_page, "pages": 0},
                 "No users found"
             )
 
-        # Simple pagination
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_users = users_list[start_idx:end_idx]
@@ -178,7 +203,8 @@ def get_all_users():
         return create_success_response(response_data)
 
     except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logger.exception("Unhandled error in get_all_users")
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['GET'])
 def get_user(user_id):
@@ -192,17 +218,20 @@ def get_user(user_id):
         return create_success_response(user)
 
     except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logger.exception("Unhandled error in get_user")
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users', methods=['POST'])
 def create_user():
     """POST endpoint to create a new user"""
     try:
-        # Check if request contains JSON data
         if not request.is_json:
             return create_error_response("Request must contain JSON data", 400)
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
+
+        if data is None:
+            return create_error_response("Invalid JSON in request body", 400)
 
         if not data:
             return create_error_response("Request body is empty", 400)
@@ -239,22 +268,24 @@ def create_user():
         )
 
     except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logger.exception("Unhandled error in create_user")
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['PUT'])
 def update_user(user_id):
     """PUT endpoint to update an existing user"""
     try:
-        # Check if user exists
         user = get_user_by_id(user_id)
         if not user:
             return create_error_response(f"User with ID {user_id} not found", 404)
 
-        # Check if request contains JSON data
         if not request.is_json:
             return create_error_response("Request must contain JSON data", 400)
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
+
+        if data is None:
+            return create_error_response("Invalid JSON in request body", 400)
 
         if not data:
             return create_error_response("Request body is empty", 400)
@@ -284,7 +315,8 @@ def update_user(user_id):
         )
 
     except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logger.exception("Unhandled error in update_user")
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):
@@ -304,9 +336,17 @@ def delete_user(user_id):
         )
 
     except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logger.exception("Unhandled error in delete_user")
+        return create_error_response("Internal server error", 500)
 
 # Error handlers
+@app.errorhandler(400)
+def bad_request(error):
+    """Handle 400 errors (e.g. malformed JSON from Flask's parser)"""
+    logger.warning("Bad request: %s", error)
+    message = getattr(error, 'description', 'Bad request')
+    return create_error_response(message, 400)
+
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
@@ -317,9 +357,15 @@ def method_not_allowed(error):
     """Handle 405 errors"""
     return create_error_response("Method not allowed for this endpoint", 405)
 
+@app.errorhandler(415)
+def unsupported_media_type(error):
+    """Handle 415 errors"""
+    return create_error_response("Unsupported media type. Use application/json", 415)
+
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors"""
+    logger.exception("Internal server error: %s", error)
     return create_error_response("Internal server error", 500)
 
 # Development utilities
