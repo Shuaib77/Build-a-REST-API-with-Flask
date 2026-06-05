@@ -12,12 +12,16 @@ Date: September 26, 2025
 
 from flask import Flask, request, jsonify
 from datetime import datetime
-import json
-import os
+import re
 
 # Initialize Flask application
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
+
+# Maximum allowed length for user-supplied string fields
+MAX_FIELD_LENGTH = 200
+# Maximum page size for pagination
+MAX_PER_PAGE = 100
 
 # In-memory storage for users (as specified in requirements)
 users_db = {}
@@ -71,9 +75,15 @@ def validate_user_data(data, is_update=False):
         if field not in data or not data[field]:
             errors.append(f"'{field}' is required")
 
-    # Email validation (basic)
+    # String length limits
+    for field in ('name', 'email', 'department'):
+        if field in data and isinstance(data[field], str) and len(data[field]) > MAX_FIELD_LENGTH:
+            errors.append(f"'{field}' must be at most {MAX_FIELD_LENGTH} characters")
+
+    # Email validation
     if 'email' in data and data['email']:
-        if '@' not in data['email'] or '.' not in data['email']:
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, data['email']):
             errors.append("Invalid email format")
 
     # Age validation
@@ -151,8 +161,8 @@ def get_all_users():
     """GET endpoint to retrieve all users"""
     try:
         # Support for pagination (optional enhancement)
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 10, type=int)
+        page = max(1, request.args.get('page', 1, type=int))
+        per_page = min(max(1, request.args.get('per_page', 10, type=int)), MAX_PER_PAGE)
 
         users_list = list(users_db.values())
 
@@ -177,8 +187,8 @@ def get_all_users():
 
         return create_success_response(response_data)
 
-    except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+    except Exception:
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['GET'])
 def get_user(user_id):
@@ -191,8 +201,8 @@ def get_user(user_id):
 
         return create_success_response(user)
 
-    except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+    except Exception:
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users', methods=['POST'])
 def create_user():
@@ -238,8 +248,8 @@ def create_user():
             201
         )
 
-    except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+    except Exception:
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['PUT'])
 def update_user(user_id):
@@ -283,8 +293,8 @@ def update_user(user_id):
             f"User with ID {user_id} updated successfully"
         )
 
-    except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+    except Exception:
+        return create_error_response("Internal server error", 500)
 
 @app.route('/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):
@@ -303,8 +313,8 @@ def delete_user(user_id):
             f"User with ID {user_id} deleted successfully"
         )
 
-    except Exception as e:
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+    except Exception:
+        return create_error_response("Internal server error", 500)
 
 # Error handlers
 @app.errorhandler(404)
@@ -321,20 +331,6 @@ def method_not_allowed(error):
 def internal_error(error):
     """Handle 500 errors"""
     return create_error_response("Internal server error", 500)
-
-# Development utilities
-@app.route('/reset', methods=['POST'])
-def reset_data():
-    """Reset all data to initial state (development only)"""
-    global users_db, user_counter
-    users_db = {}
-    user_counter = 1
-    initialize_sample_data()
-
-    return create_success_response(
-        {"total_users": len(users_db)},
-        "Database reset successfully"
-    )
 
 if __name__ == '__main__':
     # Initialize sample data
@@ -353,4 +349,4 @@ if __name__ == '__main__':
     print("\n⏹️  Press Ctrl+C to stop the server")
 
     # Run the Flask application
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
